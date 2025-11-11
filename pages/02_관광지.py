@@ -1,6 +1,6 @@
 # app.py
 import streamlit as st
-from streamlit_folium import st_folium
+from streamlit-folium import st_folium
 import folium
 from folium.plugins import MarkerCluster
 
