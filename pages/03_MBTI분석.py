@@ -21,77 +21,107 @@ def rgb_to_hex(rgb):
 def blend(c1, c2, t):
     return tuple(int((1 - t) * c1[i] + t * c2[i]) for i in range(3))
 
-def gradient_colors(n):
-    red = "#ff4136"
-    blue = "#1f77b4"
-    white = "#ffffff"
-
+def gradient(n, start="#1f77b4"):
+    # 파란색 → 흰색 그라데이션 n개
+    base = hex_to_rgb(start)
+    white = hex_to_rgb("#ffffff")
     colors = []
-    if n >= 1:
-        colors.append(red)
-
-    blue_rgb = hex_to_rgb(blue)
-    white_rgb = hex_to_rgb(white)
-
-    for i in range(n - 1):
-        t = (i / max(1, n - 2)) * 0.9
-        light_rgb = blend(blue_rgb, white_rgb, t)
-        colors.append(rgb_to_hex(light_rgb))
-
+    for i in range(n):
+        t = (i / max(1, n - 1)) * 0.8
+        colors.append(rgb_to_hex(blend(base, white, t)))
     return colors
 
-# 앱
-st.title("🌍 Country MBTI Explorer")
-st.write("국가를 선택하면 MBTI 비율을 인터랙티브 막대그래프로 보여줍니다.")
+############################################
+# APP START
+############################################
 
 df = load_data()
 mbti_cols = [c for c in df.columns if c != "Country"]
 
-st.sidebar.header("옵션")
-country = st.sidebar.selectbox("국가 선택", df["Country"].sort_values())
-sort_flag = st.sidebar.checkbox("값 기준 정렬(내림차순)", True)
-show_raw = st.sidebar.checkbox("원본 데이터 보기")
+st.title("🌍 Country MBTI Explorer")
+tab1, tab2 = st.tabs(["국가별 분석", "MBTI 유형별 분석"])
 
-row = df[df["Country"] == country]
-ser = row.iloc[0][mbti_cols].astype(float)
+############################################
+# TAB 1 — 국가별 MBTI 분석
+############################################
+with tab1:
+    st.subheader("국가 선택 → MBTI 비율 분석")
 
-chart_df = ser.reset_index()
-chart_df.columns = ["MBTI", "Value"]
+    country = st.selectbox("국가 선택", df["Country"].sort_values())
 
-if sort_flag:
-    chart_df = chart_df.sort_values("Value", ascending=False)
+    row = df[df["Country"] == country]
+    ser = row.iloc[0][mbti_cols].astype(float)
 
-colors = gradient_colors(len(chart_df))
-color_map = {mbti: colors[i] for i, mbti in enumerate(chart_df["MBTI"])}
+    chart_df = ser.reset_index()
+    chart_df.columns = ["MBTI", "Value"]
+    chart_df = chart_df.sort_values("Value", ascending=False).reset_index(drop=True)
+    chart_df["Pct"] = chart_df["Value"] * 100
 
-chart_df["Pct"] = chart_df["Value"] * 100
+    # 색 (1등 = 빨강, 나머지 파랑 그라데이션)
+    colors = ["#ff4136"] + gradient(len(chart_df) - 1)
+    color_map = {chart_df["MBTI"][i]: colors[i] for i in range(len(chart_df))}
 
-fig = px.bar(
-    chart_df,
-    x="MBTI",
-    y="Pct",
-    text="Pct",
-    color="MBTI",
-    color_discrete_map=color_map,
-    title=f"{country} — MBTI 비율 (%)",
-)
+    fig = px.bar(
+        chart_df,
+        x="MBTI",
+        y="Pct",
+        text="Pct",
+        color="MBTI",
+        color_discrete_map=color_map,
+        title=f"{country} — MBTI 비율 (%)",
+    )
 
-fig.update_traces(texttemplate="%{text:.2f}%", textposition="outside")
-fig.update_yaxes(range=[0, chart_df["Pct"].max() * 1.2])
-fig.update_layout(showlegend=False)
+    fig.update_traces(texttemplate="%{text:.2f}%", textposition="outside")
+    fig.update_yaxes(range=[0, chart_df["Pct"].max() * 1.2])
+    fig.update_layout(showlegend=False)
 
-st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, use_container_width=True)
 
-if show_raw:
-    st.subheader("원본 수치 (%)")
-    tmp = chart_df[["MBTI", "Pct"]].copy()
-    tmp["Pct"] = tmp["Pct"].round(4).astype(str) + "%"
-    st.dataframe(tmp)
+############################################
+# TAB 2 — MBTI 유형별 국가 TOP 10
+############################################
+with tab2:
+    st.subheader("MBTI 유형 선택 → 해당 유형 비율이 높은 국가 Top 10")
 
-csv = chart_df[["MBTI", "Value"]].to_csv(index=False)
-st.download_button(
-    "CSV 다운로드",
-    data=csv,
-    file_name=f"{country}_MBTI.csv",
-    mime="text/csv",
-)
+    mbti = st.selectbox("MBTI 유형 선택", mbti_cols)
+
+    # 정렬 후 Top10
+    top10 = df[["Country", mbti]].sort_values(mbti, ascending=False).head(10)
+    top10["Pct"] = top10[mbti] * 100
+
+    # 색: 한국(Korea, Republic of / South Korea 포함 시) → 빨강
+    korea_names = ["South Korea", "Korea, Republic of", "Korea"]
+    bars = top10["Country"].tolist()
+
+    bar_colors = []
+    for c in bars:
+        if any(k in c for k in korea_names):
+            bar_colors.append("#ff4136")   # 한국 빨간색
+        else:
+            bar_colors.append(None)         # 나중에 채움
+
+    # 나머지 파랑 그라데이션 채우기
+    blue_grad = gradient(bar_colors.count(None))
+    idx = 0
+    for i in range(len(bar_colors)):
+        if bar_colors[i] is None:
+            bar_colors[i] = blue_grad[idx]
+            idx += 1
+
+    fig2 = px.bar(
+        top10,
+        x="Country",
+        y="Pct",
+        text="Pct",
+        title=f"{mbti} 유형이 가장 높은 국가 Top 10",
+    )
+
+    fig2.update_traces(
+        texttemplate="%{text:.2f}%",
+        textposition="outside",
+        marker_color=bar_colors,
+    )
+    fig2.update_yaxes(range=[0, top10["Pct"].max() * 1.2])
+
+    st.plotly_chart(fig2, use_container_width=True)
+
