@@ -132,15 +132,3 @@ st.download_button(label="선택 국가 MBTI CSV 다운로드", data=csv, file_n
 
 st.markdown("---")
 st.caption("앱: Streamlit + Plotly · 데이터: countriesMBTI_16types.csv")
-
-
-# ----------------------
-# requirements.txt (copy into a requirements.txt in your repo)
-# ----------------------
-"""
-# requirements.txt
-streamlit>=1.24
-pandas>=2.0
-plotly>=5.0
-numpy>=1.24
-"""
