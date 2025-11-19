@@ -3,205 +3,152 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 import urllib.request
+import urllib.parse
 import json
 from collections import Counter
 
 st.set_page_config(page_title="부산 안내문자 통계 & 지도", layout="wide")
 st.title("📊 부산광역시 구별 안내문자 통계 & 지도")
 
-# -------------------------
-# 1) CSV 파일 경로 (pages 폴더 -> 상위 루트의 CSV)
-# -------------------------
+
+# ------------------------------------------------------------
+# 1) CSV 파일 경로 (pages → 상위 루트)
+# ------------------------------------------------------------
 CSV_PATH = os.path.join(os.path.dirname(__file__), "..", "gagagaga.CSV")
 
 if not os.path.exists(CSV_PATH):
-    st.error(f"CSV 파일을 찾을 수 없습니다: {CSV_PATH}\n(루트에 gagagaga.CSV가 있는지 확인하세요)")
+    st.error(f"CSV 파일을 찾을 수 없습니다: {CSV_PATH}")
     st.stop()
 
-# CSV는 cp949(윈도우 한글) 형식일 가능성이 있어 cp949로 읽습니다
 try:
     df = pd.read_csv(CSV_PATH, encoding="cp949")
-except Exception as e:
-    st.error(f"CSV 로드 오류: {e}")
-    st.stop()
+except:
+    df = pd.read_csv(CSV_PATH, encoding="utf-8", errors="ignore")
 
-st.markdown(f"**데이터 로드 완료** — 전체 행: {len(df)}")
+st.success(f"데이터 로드 완료 — 총 {len(df)}행")
 
-# -------------------------
-# 2) 대상지역 파싱 (콤마로 분리) -> '구/군' 단위로 세기
-# -------------------------
+
+# ------------------------------------------------------------
+# 2) 대상지역에서 구/군 이름 파싱
+# ------------------------------------------------------------
 if "대상지역" not in df.columns:
-    st.error("CSV에 '대상지역' 컬럼이 없습니다. 컬럼명을 확인해 주세요.")
+    st.error("CSV에 '대상지역' 컬럼이 없습니다.")
     st.stop()
 
-# 부산의 행정 구/군 리스트 (일반적 명칭)
 BUSAN_GU_LIST = [
     "중구","서구","동구","영도구","부산진구","동래구","남구","북구","해운대구",
     "사하구","금정구","강서구","연제구","수영구","사상구","기장군"
 ]
 
-def normalize_gu(name: str) -> str:
-    """구 이름 정규화: 공백 제거, '구'/'군' 형태 유지 (예: '해운대구')"""
-    if not isinstance(name, str):
+def clean_name(x):
+    if not isinstance(x, str):
         return ""
-    s = name.strip()
-    # 일부 항목에 괄호나 공백이 섞여있을 수 있어 간단 정리
-    s = s.replace(" ", "").replace("　", "")
-    # 만약 '부산광역시'가 포함되면 제거
-    s = s.replace("부산광역시", "")
-    return s
+    x = x.replace("부산광역시", "").replace(" ", "").replace("　", "")
+    return x
 
-# 대상지역 칼럼에서 모든 구를 뽑아 카운트
 all_gu = []
-for val in df["대상지역"].dropna().astype(str):
-    # 쉼표 기준으로 분리
-    parts = [p.strip() for p in val.split(",") if p.strip() != ""]
-    for p in parts:
-        p_norm = normalize_gu(p)
-        # 후보가 BUSAN_GU_LIST에 있거나 '구' 혹은 '군' 문자열을 포함하면 채택
-        if p_norm in BUSAN_GU_LIST:
-            all_gu.append(p_norm)
+for row in df["대상지역"].dropna():
+    items = [i.strip() for i in str(row).split(",") if i.strip() != ""]
+    for item in items:
+        name = clean_name(item)
+        if name in BUSAN_GU_LIST:
+            all_gu.append(name)
         else:
-            # 일부 데이터는 '부산광역시'만 있거나 '구'가 생략된 케이스가 있을 수 있음
-            # 끝에 '구' 혹은 '군'이 포함된다면 그대로 사용
-            if p_norm.endswith("구") or p_norm.endswith("군"):
-                all_gu.append(p_norm)
-            else:
-                # 혹은 '기장'처럼 '군'이 빠진 경우 '기장군'으로 보정 시도
-                if p_norm in ["기장"]:
-                    all_gu.append("기장군")
-                # 그 외는 무시
+            if name.endswith("구") or name.endswith("군"):
+                all_gu.append(name)
+            elif name == "기장":
+                all_gu.append("기장군")
 
-# 집계
 gu_counter = Counter(all_gu)
 
-# 결과 DataFrame (빈 구도 모두 표시)
 result_df = pd.DataFrame({
     "구": BUSAN_GU_LIST,
     "안내문자수": [gu_counter.get(g, 0) for g in BUSAN_GU_LIST]
 })
 
-# 정렬: 안내문자수 내림차순
 result_df = result_df.sort_values("안내문자수", ascending=False).reset_index(drop=True)
-
 st.subheader("📌 구별 안내문자 집계")
 st.dataframe(result_df)
 
-# -------------------------
-# 3) 색 지정: max=red, min=blue, others=yellow
-# -------------------------
-max_idx = result_df["안내문자수"].idxmax()
-min_idx = result_df["안내문자수"].idxmin()
-max_gu = result_df.loc[max_idx, "구"]
-min_gu = result_df.loc[min_idx, "구"]
 
-def pick_color(gu):
+# ------------------------------------------------------------
+# 3) 색 지정 (최대=red, 최소=blue, 나머지=yellow)
+# ------------------------------------------------------------
+max_gu = result_df.loc[result_df["안내문자수"].idxmax(), "구"]
+min_gu = result_df.loc[result_df["안내문자수"].idxmin(), "구"]
+
+def color_map(gu):
     if gu == max_gu:
         return "red"
     elif gu == min_gu:
         return "blue"
-    else:
-        return "yellow"
+    return "yellow"
 
-result_df["color"] = result_df["구"].apply(pick_color)
+result_df["color"] = result_df["구"].apply(color_map)
 
-# -------------------------
-# 4) Plotly 막대그래프 (인터랙티브)
-# -------------------------
-st.subheader("📊 막대그래프: 구별 안내문자수")
+
+# ------------------------------------------------------------
+# 4) Plotly 막대그래프
+# ------------------------------------------------------------
+st.subheader("📊 막대그래프")
 fig_bar = px.bar(
     result_df,
     x="구",
     y="안내문자수",
-    color="color",
-    color_discrete_map="identity",  # color 컬럼의 값(red/blue/yellow)을 그대로 사용
     text="안내문자수",
-    title="부산광역시 구별 안내문자 수"
+    color="color",
+    color_discrete_map="identity",
+    title="부산 구별 안내문자 수"
 )
 fig_bar.update_traces(textposition="outside")
-fig_bar.update_layout(yaxis_title="안내문자 수", xaxis_title="구", height=520)
 st.plotly_chart(fig_bar, use_container_width=True)
 
-# -------------------------
-# 5) 지도 시각화 (Plotly Choropleth Mapbox)
-# -------------------------
-st.subheader("🗺 지도 시각화 (부산 구별)")
 
-GEOJSON_URL = "https://raw.githubusercontent.com/juminemap/geojson_korea/master/municipalities/geojson/부산광역시.geojson"
+# ------------------------------------------------------------
+# 5) 지도 시각화 (GeoJSON)
+# ------------------------------------------------------------
+st.subheader("🗺 지도 시각화")
+
+# 한글 URL 인코딩 처리
+RAW_GEOJSON_URL = "https://raw.githubusercontent.com/juminemap/geojson_korea/master/municipalities/geojson/부산광역시.geojson"
+GEOJSON_URL = urllib.parse.quote(RAW_GEOJSON_URL, safe=':/')
 
 try:
     with urllib.request.urlopen(GEOJSON_URL) as url:
-        geojson = json.loads(url.read().decode())
+        geojson = json.loads(url.read().decode("utf-8"))
 except Exception as e:
     st.error(f"GeoJSON을 불러오는 데 실패했습니다: {e}")
     st.stop()
 
-# GeoJSON 내부 feature의 지역명 키가 무엇인지 확정하기 위해 시도적으로 추출
-# 각 feature의 properties에서 가능한 이름을 찾아 정규화한 값을 새 속성 'gu_norm'에 넣습니다.
-def extract_best_name(props: dict) -> str:
-    # 후보 키들 (데이터마다 다를 수 있으므로 여러 키 시도)
-    candidate_keys = ["name", "NAME", "adm_nm", "SIG_KOR_NM", "name_kor", "county", "EMD_KOR_NM", "CTP_KOR_NM"]
-    for k in candidate_keys:
-        if k in props and isinstance(props[k], str) and props[k].strip() != "":
-            return props[k]
-    # 마지막으로 properties 전체를 문자열화 시도
+# GeoJSON 속성에서 행정구 이름 추출
+def extract_name(props):
+    for key in ["name", "NAME", "adm_nm", "SIG_KOR_NM", "name_kor"]:
+        if key in props:
+            return clean_name(props[key])
     for v in props.values():
-        if isinstance(v, str) and v.strip() != "":
-            return v
+        if isinstance(v, str):
+            return clean_name(v)
     return ""
 
-# 각 feature에 'gu_norm' 속성 추가 (정규화)
-for feat in geojson.get("features", []):
-    props = feat.get("properties", {})
-    raw_name = extract_best_name(props)
-    # 정규화: 공백 제거, '구'/'군' 등 유지
-    raw_name = raw_name.replace(" ", "").replace("　", "")
-    # 일부 소스는 "부산광역시 중구" 같은 형식일 수 있으니 '부산' 제거
-    raw_name = raw_name.replace("부산광역시", "").replace("부산", "")
-    # 마지막 확인: 만약 이름이 'Jung-gu' 영문 등이라면 소문자로 변환 (보완)
-    feat["properties"]["gu_norm"] = raw_name
+for feat in geojson["features"]:
+    feat["properties"]["gu_norm"] = extract_name(feat["properties"])
 
-# 이제 result_df에도 동일 방식의 정규화 컬럼 추가
-result_df["gu_norm"] = result_df["구"].str.replace(" ", "").str.replace("　", "")
+result_df["gu_norm"] = result_df["구"].map(clean_name)
 
-# 확인: 어떤 geojson feature gu_norm이 우리 result_df와 매칭되는지 보장하기 위해
-# (일치하지 않으면 지도에 표시되지 않을 수 있음 — 이 경우 이름 매핑을 추가로 조정해야 함)
-available_geo_names = {feat["properties"].get("gu_norm", "") for feat in geojson.get("features", [])}
-matched = result_df["gu_norm"].isin(available_geo_names).sum()
-if matched == 0:
-    st.warning("지도와 구 이름 매칭이 되지 않았습니다. GeoJSON의 지역명 구조가 다른 것 같습니다. (아래는 시도한 정규화 결과)")
-    st.write("GeoJSON에 존재하는 예시 지역명:", list(sorted(list(available_geo_names)))[0:10])
-else:
-    st.write(f"지도 매칭된 구 수: {matched} / {len(result_df)}")
-
-# 지도용 컬러: max=red, min=blue, others=yellow
-result_df["map_color"] = result_df["color"]  # 이미 red/blue/yellow
-
-# Plotly Choropleth (categorical color)
 fig_map = px.choropleth_mapbox(
     result_df,
     geojson=geojson,
     locations="gu_norm",
     featureidkey="properties.gu_norm",
-    color="map_color",
+    color="color",
     color_discrete_map={"red":"red","blue":"blue","yellow":"yellow"},
     hover_name="구",
-    hover_data={"안내문자수":True, "gu_norm":False, "map_color":False},
+    hover_data={"안내문자수": True},
     mapbox_style="carto-positron",
     center={"lat": 35.1796, "lon": 129.0756},
-    zoom=9.6,
+    zoom=9.5,
     opacity=0.7,
-    title="부산광역시 구별 안내문자 수 (색: 최대=빨강, 최소=파랑, 기타=노랑)"
+    title="부산광역시 구별 안내문자 지도"
 )
 
-fig_map.update_layout(height=700, margin={"r":0,"t":50,"l":0,"b":0})
 st.plotly_chart(fig_map, use_container_width=True)
-
-# -------------------------
-# 6) 다운로드 / 요약
-# -------------------------
-st.subheader("요약")
-st.markdown(f"- 총 메시지(행) 수: **{len(df)}**")
-st.markdown(f"- 구별 집계 상위 3:\n{result_df.head(3).to_csv(index=False)}")
-
-st.success("완료 — 필요하면 '날짜 필터', '키워드 분석', '시계열' 등 추가 기능을 더해드릴게요.")
