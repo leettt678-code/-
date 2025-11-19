@@ -2,13 +2,10 @@ import os
 import streamlit as st
 import pandas as pd
 import plotly.express as px
-import urllib.request
-import urllib.parse
-import json
 from collections import Counter
 
-st.set_page_config(page_title="부산 안내문자 통계 & 지도", layout="wide")
-st.title("📊 부산광역시 구별 안내문자 통계 & 지도")
+st.set_page_config(page_title="부산 안내문자 통계", layout="wide")
+st.title("📊 부산광역시 구별 안내문자 통계")
 
 
 # ------------------------------------------------------------
@@ -102,53 +99,3 @@ fig_bar = px.bar(
 )
 fig_bar.update_traces(textposition="outside")
 st.plotly_chart(fig_bar, use_container_width=True)
-
-
-# ------------------------------------------------------------
-# 5) 지도 시각화 (GeoJSON)
-# ------------------------------------------------------------
-st.subheader("🗺 지도 시각화")
-
-# 한글 URL 인코딩 처리
-RAW_GEOJSON_URL = "https://raw.githubusercontent.com/juminemap/geojson_korea/master/municipalities/geojson/부산광역시.geojson"
-GEOJSON_URL = urllib.parse.quote(RAW_GEOJSON_URL, safe=':/')
-
-try:
-    with urllib.request.urlopen(GEOJSON_URL) as url:
-        geojson = json.loads(url.read().decode("utf-8"))
-except Exception as e:
-    st.error(f"GeoJSON을 불러오는 데 실패했습니다: {e}")
-    st.stop()
-
-# GeoJSON 속성에서 행정구 이름 추출
-def extract_name(props):
-    for key in ["name", "NAME", "adm_nm", "SIG_KOR_NM", "name_kor"]:
-        if key in props:
-            return clean_name(props[key])
-    for v in props.values():
-        if isinstance(v, str):
-            return clean_name(v)
-    return ""
-
-for feat in geojson["features"]:
-    feat["properties"]["gu_norm"] = extract_name(feat["properties"])
-
-result_df["gu_norm"] = result_df["구"].map(clean_name)
-
-fig_map = px.choropleth_mapbox(
-    result_df,
-    geojson=geojson,
-    locations="gu_norm",
-    featureidkey="properties.gu_norm",
-    color="color",
-    color_discrete_map={"red":"red","blue":"blue","yellow":"yellow"},
-    hover_name="구",
-    hover_data={"안내문자수": True},
-    mapbox_style="carto-positron",
-    center={"lat": 35.1796, "lon": 129.0756},
-    zoom=9.5,
-    opacity=0.7,
-    title="부산광역시 구별 안내문자 지도"
-)
-
-st.plotly_chart(fig_map, use_container_width=True)
